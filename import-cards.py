@@ -31,12 +31,14 @@ spreadsheet_file: Spreadsheet document file, either an open office document
 """
 
 import argparse
+import copy
 import html
 import json
 import os
 import shutil
 import sys
 import tempfile
+from uuid import uuid4
 import zipfile
 
 
@@ -164,11 +166,14 @@ LIBRARIES = {
     'H5P.Dialogcards': {
         'collection': 'dialogs',
         'center': True
-    }  ,
+    },
     'H5P.Flashcards': {
         'collection': 'cards',
         'center': False,
-    }
+    },
+    'H5P.QuestionSet': {
+        'collection': 'questions',
+    },
 }
 
 def as_card_html(value, center):
@@ -178,6 +183,40 @@ def as_card_html(value, center):
         return html.escape(value)
     return f'<p style="text-align:center;">{html.escape(value)}</p>'
 
+def get_question_set(collection, cards, title):
+    """Create a new list of fill-in-the-blanks questions for the given cards,
+    using one of the existing questions as a template. The new questions are
+    returned as a list of dicts, ready to be written into content.json."""
+
+    # Get one fill-in-the-blanks question that is used for the general settings.
+    skeleton = None
+    for question in collection:
+        if question['library'].index('H5P.Blanks') > -1:
+            skeleton = question
+            break
+    if not skeleton:
+        raise ValueError('Need one "Fill in the blanks" question')
+    # Create a new fill-in-the-blanks question for each card, using the skeleton as a template.
+    new_questions = []
+    for front, back in cards:
+        new_question = copy.deepcopy(skeleton)
+        new_question['metadata']['title'] = front
+        new_question['params']['questions'] = [f'<p>{html.escape(front)}: *{html.escape(back)}*</p>']
+        if title is not None:
+            new_question['params']['text'] = f'<p>{html.escape(title)}</p>'
+        new_question['subContentId'] = str(uuid4())
+        new_questions.append(new_question)
+    return new_questions
+
+def get_card_set(cards, settings):
+    return [
+        {
+            "text": as_card_html(front, settings['center']),
+            "answer": as_card_html(back, settings['center']),
+            "tips": {},
+        }
+        for front, back in cards
+    ]
 
 def write_cards_to_h5p(h5p_path, cards, title=None):
     """Replace the `dialogs` list inside the h5p's content.json with one entry
@@ -199,17 +238,16 @@ def write_cards_to_h5p(h5p_path, cards, title=None):
             raise ValueError(f"{h5p_meta[LIBRARY_KEY]!r} is not a supported H5P type.")
 
     settings = LIBRARIES[h5p_meta[LIBRARY_KEY]]
-    content[settings['collection']] = [
-        {
-            "text": as_card_html(front, settings['center']),
-            "answer": as_card_html(back, settings['center']),
-            "tips": {},
-        }
-        for front, back in cards
-    ]
-    if title is not None:
-        content["title"] = f"<p>{html.escape(title)}</p>"
-        h5p_meta["title"] = title
+    if h5p_meta[LIBRARY_KEY] == 'H5P.QuestionSet':
+        content[settings['collection']] = get_question_set(
+            content[settings['collection']],
+            cards,
+            title
+        )
+    else:
+        content[settings['collection']] = get_card_set(cards, settings)
+        if title is not None:
+                content["title"] = f"<p>{html.escape(title)}</p>"
 
     # Map of archive member name -> its new bytes. Members not listed here are
     # copied through unchanged.
@@ -217,6 +255,7 @@ def write_cards_to_h5p(h5p_path, cards, title=None):
         CONTENT_PATH: json.dumps(content, ensure_ascii=False).encode("utf-8"),
     }
     if title is not None:
+        h5p_meta["title"] = title
         replacements[H5P_PATH] = json.dumps(
             h5p_meta, ensure_ascii=False
         ).encode("utf-8")
