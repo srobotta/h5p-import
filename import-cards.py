@@ -1,0 +1,307 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+
+"""
+Copyright 2026 Stephan Robotta
+Released under the terms of the GNU General Public Licence, version 3
+<http://www.gnu.org/licenses/>
+
+Imports a wordlist from a spreadsheet document into a h5p file. The H5P types that
+are suppoted are Flash Cards and Dialog Cards. The spreadsheet may be an open office
+document (.ods) or an Excel workbook (.xlsx); the format is chosen by the file suffix.
+
+Usage: import-cards.py [-h] [--front <letter>] [--back <letter>] [--row <number>]
+                       [--sheet <name>] [--title <text>] h5p_file spreadsheet_file
+
+Input arguments are:
+h5p_file: File with the dialog-card or flash-card object (will be overwritten
+          with the new card content).
+spreadsheet_file: Spreadsheet document file, either an open office document
+          (.ods) or an Excel workbook (.xlsx).
+--front:  The column letter (defaults to A) for the items that go on the
+          front side of the cards (the questions).
+--back:   The column letter (defaults to B) for the items that go on the
+          backside of the cards (the answers).
+--row:    The number of the row where to start the import (to skip header lines,
+          defaults to 1).
+--sheet:  The name of the sheet in the spreadsheet to use, defaults
+          to the first sheet in the spreadsheed document.
+--title:  The title to set in the h5p (content/content.json and h5p.json). When
+          omitted, the existing title is left unchanged.
+"""
+
+import argparse
+import html
+import json
+import os
+import shutil
+import sys
+import tempfile
+import zipfile
+
+
+def column_letter_to_index(letter):
+    """Convert a spreadsheet column letter (A, B, ..., Z, AA, ...) to a
+    zero-based column index."""
+    letter = letter.strip().upper()
+    if not letter or not letter.isalpha():
+        raise ValueError(f"Invalid column letter: {letter!r}")
+    index = 0
+    for char in letter:
+        index = index * 26 + (ord(char) - ord("A") + 1)
+    return index - 1
+
+
+def ods_to_grid(ods_path, sheet_name):
+    """Read an open office spreadsheet (.ods) and return its selected sheet as a
+    list of rows, where each row is a list of the cell text values. Expands the
+    repeat-count shorthand that ODS uses for consecutive identical rows/cells."""
+    from odf.opendocument import load
+    from odf.table import Table, TableRow, TableCell
+    from odf.text import P
+
+    def cell_text(cell):
+        # Join the text of all paragraphs a cell contains. str() on a paragraph
+        # node yields its concatenated text content.
+        return "\n".join(str(p) for p in cell.getElementsByType(P))
+
+    doc = load(ods_path)
+    tables = doc.getElementsByType(Table)
+    if not tables:
+        raise ValueError("The document contains no sheets.")
+    if sheet_name is None:
+        table = tables[0]
+    else:
+        table = next(
+            (t for t in tables if t.getAttribute("name") == sheet_name), None
+        )
+        if table is None:
+            available = [t.getAttribute("name") for t in tables]
+            raise ValueError(
+                f"Sheet {sheet_name!r} not found. Available sheets: {available}"
+            )
+
+    grid = []
+    for row in table.getElementsByType(TableRow):
+        row_repeat = int(row.getAttribute("numberrowsrepeated") or 1)
+        cells = []
+        for cell in row.getElementsByType(TableCell):
+            cell_repeat = int(cell.getAttribute("numbercolumnsrepeated") or 1)
+            cells.extend([cell_text(cell)] * cell_repeat)
+        # Trailing empty repeated rows (often a huge number) would blow up the
+        # grid, so cap the repeat for a row that has no content.
+        if not any(c.strip() for c in cells):
+            row_repeat = 1
+        for _ in range(row_repeat):
+            grid.append(list(cells))
+    return grid
+
+
+def xlsx_to_grid(xlsx_path, sheet_name):
+    """Read an Excel workbook (.xlsx) and return its selected sheet as a list of
+    rows, where each row is a list of the cell text values."""
+    from openpyxl import load_workbook
+
+    workbook = load_workbook(xlsx_path, read_only=True, data_only=True)
+    try:
+        if sheet_name is None:
+            sheet = workbook.worksheets[0]
+        elif sheet_name in workbook.sheetnames:
+            sheet = workbook[sheet_name]
+        else:
+            raise ValueError(
+                f"Sheet {sheet_name!r} not found. "
+                f"Available sheets: {workbook.sheetnames}"
+            )
+
+        grid = []
+        for row in sheet.iter_rows(values_only=True):
+            grid.append(["" if value is None else str(value) for value in row])
+        return grid
+    finally:
+        workbook.close()
+
+
+# Map of file suffix to the function that reads that spreadsheet format.
+GRID_READERS = {
+    ".ods": ods_to_grid,
+    ".xlsx": xlsx_to_grid,
+}
+
+
+def extract_cards(spreadsheet_path, front_column, back_column, start_row, sheet_name):
+    """Read the spreadsheet document and return a list of [front, back] pairs,
+    one per card. The file format is chosen by the file suffix. Rows where both
+    sides are empty are skipped."""
+    suffix = os.path.splitext(spreadsheet_path)[1].lower()
+    reader = GRID_READERS.get(suffix)
+    if reader is None:
+        supported = ", ".join(sorted(GRID_READERS))
+        raise ValueError(
+            f"Unsupported spreadsheet type {suffix!r}; supported types: {supported}."
+        )
+    grid = reader(spreadsheet_path, sheet_name)
+
+    front_index = column_letter_to_index(front_column)
+    back_index = column_letter_to_index(back_column)
+
+    cards = []
+    # start_row is a 1-based spreadsheet row number; convert to a 0-based index.
+    for row in grid[start_row - 1:]:
+        front = row[front_index].strip() if front_index < len(row) else ""
+        back = row[back_index].strip() if back_index < len(row) else ""
+        if not front and not back:
+            continue
+        cards.append([front, back])
+    return cards
+
+
+# Paths of the JSON files inside the h5p zip archive.
+CONTENT_PATH = "content/content.json"
+H5P_PATH = "h5p.json"
+LIBRARY_KEY = "mainLibrary"
+LIBRARIES = {
+    'H5P.Dialogcards': {
+        'collection': 'dialogs',
+        'center': True
+    }  ,
+    'H5P.Flashcards': {
+        'collection': 'cards',
+        'center': False,
+    }
+}
+
+def as_card_html(value, center):
+    """Wrap a card side's plain text in the centered paragraph markup that the
+    dialog-card content uses, escaping any HTML-significant characters."""
+    if center == False:
+        return html.escape(value)
+    return f'<p style="text-align:center;">{html.escape(value)}</p>'
+
+
+def write_cards_to_h5p(h5p_path, cards, title=None):
+    """Replace the `dialogs` list inside the h5p's content.json with one entry
+    per extracted card, then write the archive back in place. When a title is
+    given, it is also written to the `title` property of both content.json
+    (wrapped in a paragraph) and h5p.json (as plain text). All other files in
+    the archive and all other properties are left untouched."""
+    with zipfile.ZipFile(h5p_path, "r") as archive:
+        names = archive.namelist()
+        if CONTENT_PATH not in names:
+            raise ValueError(
+                f"{CONTENT_PATH!r} not found in {h5p_path!r}; is this a h5p file?"
+            )
+        content = json.loads(archive.read(CONTENT_PATH).decode("utf-8"))
+        h5p_meta = json.loads(archive.read(H5P_PATH).decode("utf-8"))
+        if LIBRARY_KEY not in h5p_meta.keys():
+            raise ValueError(f"{LIBRARY_KEY!r} not found in {H5P_PATH!r}")
+        if h5p_meta[LIBRARY_KEY] not in LIBRARIES.keys():
+            raise ValueError(f"{h5p_meta[LIBRARY_KEY]!r} is not a supported H5P type.")
+
+    settings = LIBRARIES[h5p_meta[LIBRARY_KEY]]
+    content[settings['collection']] = [
+        {
+            "text": as_card_html(front, settings['center']),
+            "answer": as_card_html(back, settings['center']),
+            "tips": {},
+        }
+        for front, back in cards
+    ]
+    if title is not None:
+        content["title"] = f"<p>{html.escape(title)}</p>"
+        h5p_meta["title"] = title
+
+    # Map of archive member name -> its new bytes. Members not listed here are
+    # copied through unchanged.
+    replacements = {
+        CONTENT_PATH: json.dumps(content, ensure_ascii=False).encode("utf-8"),
+    }
+    if title is not None:
+        replacements[H5P_PATH] = json.dumps(
+            h5p_meta, ensure_ascii=False
+        ).encode("utf-8")
+
+    # Rewrite the archive to a temp file (zip entries cannot be replaced in
+    # place), copying every member unchanged except the ones we replace, then
+    # move it over the original.
+    fd, tmp_path = tempfile.mkstemp(suffix=".h5p", dir=os.path.dirname(h5p_path) or ".")
+    os.close(fd)
+    try:
+        with zipfile.ZipFile(h5p_path, "r") as src, zipfile.ZipFile(
+            tmp_path, "w", zipfile.ZIP_DEFLATED
+        ) as dst:
+            for item in src.infolist():
+                if item.filename in replacements:
+                    dst.writestr(item, replacements[item.filename])
+                else:
+                    dst.writestr(item, src.read(item.filename))
+        shutil.move(tmp_path, h5p_path)
+    except BaseException:
+        if os.path.exists(tmp_path):
+            os.remove(tmp_path)
+        raise
+
+
+def parse_args(argv=None):
+    parser = argparse.ArgumentParser(
+        description="Import a wordlist from a spreadsheet document (.ods or .xlsx) "
+        "into a dialog-card h5p object."
+    )
+    parser.add_argument("h5p_file", help="the h5p file with the dialog-card object")
+    parser.add_argument(
+        "spreadsheet_file",
+        help="the spreadsheet document file (.ods or .xlsx)",
+    )
+    parser.add_argument(
+        "--front",
+        dest="front_column",
+        default="A",
+        help="column letter for the front side (the questions), default A",
+    )
+    parser.add_argument(
+        "--back",
+        dest="back_column",
+        default="B",
+        help="column letter for the back side (the answers), default B",
+    )
+    parser.add_argument(
+        "--row",
+        type=int,
+        default=1,
+        help="row number where the import starts (1-based), default 1",
+    )
+    parser.add_argument(
+        "--sheet",
+        default=None,
+        help="name of the sheet to use; defaults to the first sheet",
+    )
+    parser.add_argument(
+        "--title",
+        default=None,
+        help="title to set in the h5p (content.json and h5p.json); "
+        "left unchanged when omitted",
+    )
+    return parser.parse_args(argv)
+
+
+def main(argv=None):
+    args = parse_args(argv)
+    cards = extract_cards(
+        args.spreadsheet_file,
+        args.front_column,
+        args.back_column,
+        args.row,
+        args.sheet,
+    )
+
+    for front, back in cards:
+        print(f"{front!r} -> {back!r}")
+    print(f"\n{len(cards)} cards extracted.", file=sys.stderr)
+
+    write_cards_to_h5p(args.h5p_file, cards, args.title)
+    print(f"Wrote {len(cards)} cards into {args.h5p_file}.", file=sys.stderr)
+    return cards
+
+
+if __name__ == "__main__":
+    main()
