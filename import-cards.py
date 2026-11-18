@@ -334,7 +334,7 @@ def main(argv=None):
     )
 
     for front, back in cards:
-        print(f"{front!r} -> {back!r}")
+        print(f"{front!r} -> {back!r}", file=sys.stderr)
     print(f"\n{len(cards)} cards extracted.", file=sys.stderr)
 
     write_cards_to_h5p(args.h5p_file, cards, args.title)
