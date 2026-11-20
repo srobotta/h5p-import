@@ -6,7 +6,7 @@ from test_base import TestBase
 
 class TestCli(TestBase):
     """Test all cli options of the import-cards.py script with the
-    H5P Dialog Card type."""
+    H5P Dialog Card type and the ODS file."""
 
     def setUp(self) -> None:
         super().setUp()
@@ -14,8 +14,7 @@ class TestCli(TestBase):
         self.spreadsheet = self.assets_dir + '/words.ods'
 
     def test_without_args(self):
-        """Test simple without any arguments. That takes the rows A and B from
-        the first sheet."""
+        """Test ODS without any arguments."""
 
         data = self.run_command().get('stderr', [])
         self.assertEqual(data[0], "'7 x 3' -> '21'")
@@ -29,8 +28,8 @@ class TestCli(TestBase):
         self.assertEqual('<p style="text-align:center;">12 x 6</p>', h5p_content['dialogs'][2]['text'])
 
     def test_row_and_sheet(self):
-        """Test with argument row and sheet to extract the body parts in English
-        and German from the second sheet, skipping the header rows."""
+        """Test ODS with argument row and sheet."""
+
         data = self.run_command({
             '--row': '3',
             '--sheet': 'Knochen'
@@ -46,8 +45,7 @@ class TestCli(TestBase):
         self.assertEqual('<p style="text-align:center;">Calf bone</p>', h5p_content['dialogs'][10]['text'])
 
     def test_row_sheet_cols(self):
-        """Test also with row and column argument to extract a wordlist sonmewhere in the middle
-        of a worksheet."""
+        """Test ODS with arguments row, sheet, front and back."""
 
         data = self.run_command({
             '--row': '4',
@@ -66,8 +64,7 @@ class TestCli(TestBase):
         self.assertEqual('<p style="text-align:center;">Kopf</p>', h5p_content['dialogs'][9]['text'])
 
     def test_title(self):
-        """Test with the title argument, that fills the respective properties in the content.json
-        as well as in the h5p.json."""
+        """Test ODS with the title argument, verify Dialog Card."""
 
         data = self.run_command({'--title': 'Custom title & "words" in a shell'}).get('stderr', [])
         self.assertEqual(data[0], "'7 x 3' -> '21'")
