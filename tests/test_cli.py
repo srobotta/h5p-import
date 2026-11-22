@@ -78,5 +78,16 @@ class TestCli(TestBase):
         h5p_content = self.get_content_json('h5p.json')
         self.assertEqual('Custom title & "words" in a shell', h5p_content['title'])
 
+    def test_no_cards(self):
+        """Test ODS with a high row number or column where no data is defined."""
+
+        data = self.run_command({'--row': '26'}).get('stderr', [])
+        self.assertStartsWith(data[0], 'Traceback')
+        self.assertEqual(data[6], f"ValueError: No cards found in {self.spreadsheet}. Did you select the wrong columns?")
+
+        data = self.run_command({'--back': 'F'}).get('stderr', [])
+        self.assertStartsWith(data[0], 'Traceback')
+        self.assertEqual(data[6], f"ValueError: No cards found in {self.spreadsheet}. Did you select the wrong columns?")
+
 if __name__ == '__main__':
     unittest.main()

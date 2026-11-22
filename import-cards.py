@@ -154,6 +154,8 @@ def extract_cards(spreadsheet_path, front_column, back_column, start_row, sheet_
         back = row[back_index].strip() if back_index < len(row) else ""
         if not front and not back:
             continue
+        if front == '' or back == '':
+            continue
         cards.append([front, back])
     return cards
 
@@ -332,6 +334,9 @@ def main(argv=None):
         args.row,
         args.sheet,
     )
+
+    if len(cards) == 0:
+        raise ValueError(f"No cards found in {args.spreadsheet_file}. Did you select the wrong columns?")
 
     for front, back in cards:
         print(f"{front!r} -> {back!r}", file=sys.stderr)
