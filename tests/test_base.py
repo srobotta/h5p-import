@@ -57,6 +57,16 @@ class TestBase(unittest.TestCase):
             'stderr': proc.stderr.strip().split('\n')
         }
 
+    def assertStartsWith(self, s, prefix, msg=None):
+        """Assert that string ``s`` starts with ``prefix``.
+
+        ``unittest.TestCase.assertStartsWith`` only exists in Python >= 3.14,
+        so provide our own version for older interpreters used in CI.
+        """
+        if not s.startswith(prefix):
+            standard_msg = f'{s!r} does not start with {prefix!r}'
+            self.fail(self._formatMessage(msg, standard_msg))
+
     def get_content_json(self, fname='content/content.json') -> dict:
         """Returns the whole object that is inside the content/content.json inside
         the given H5P package, or any other json file from the H5P package."""
