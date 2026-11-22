@@ -83,11 +83,11 @@ class TestCli(TestBase):
 
         data = self.run_command({'--row': '26'}).get('stderr', [])
         self.assertStartsWith(data[0], 'Traceback')
-        self.assertEqual(data[6], f"ValueError: No cards found in {self.spreadsheet}. Did you select the wrong columns?")
+        self.assertEqual(data[-1], f"ValueError: No cards found in {self.spreadsheet}. Did you select the wrong columns?")
 
         data = self.run_command({'--back': 'F'}).get('stderr', [])
         self.assertStartsWith(data[0], 'Traceback')
-        self.assertEqual(data[6], f"ValueError: No cards found in {self.spreadsheet}. Did you select the wrong columns?")
+        self.assertEqual(data[-1], f"ValueError: No cards found in {self.spreadsheet}. Did you select the wrong columns?")
 
 if __name__ == '__main__':
     unittest.main()
