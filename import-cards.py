@@ -193,11 +193,11 @@ def get_question_set(collection, cards, title):
     # Get one fill-in-the-blanks question that is used for the general settings.
     skeleton = None
     for question in collection:
-        if question['library'].index('H5P.Blanks') > -1:
+        if 'H5P.Blanks' in question['library']:
             skeleton = question
             break
     if not skeleton:
-        raise ValueError('Need one "Fill in the blanks" question')
+        raise ValueError('H5P file needs one "Fill in the blanks" question')
     # Create a new fill-in-the-blanks question for each card, using the skeleton as a template.
     new_questions = []
     for front, back in cards:

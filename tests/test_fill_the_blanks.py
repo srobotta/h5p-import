@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: UTF-8 -*-
 
-import re
 import unittest
 from test_base import TestBase
 
@@ -9,9 +8,9 @@ class TestFillTheBlanks(TestBase):
     """Test the QuestionSet (Fill the blanks) with the Excel file."""
 
     def setUp(self) -> None:
-            super().setUp()
-            self.h5p_input_file = self.assets_dir + '/question-set-1128.h5p'
-            self.spreadsheet = self.assets_dir + '/words.xlsx'
+        super().setUp()
+        self.h5p_input_file = self.assets_dir + '/question-set-1128.h5p'
+        self.spreadsheet = self.assets_dir + '/words.xlsx'
     
     def test_without_args(self):
         """Test QuestionSet without any arguments."""
@@ -60,6 +59,22 @@ class TestFillTheBlanks(TestBase):
         self.assertEqual('<p>Custom title &amp; &quot;words&quot; in a shell</p>', h5p_content['questions'][3]['params']['text'])
         h5p_content = self.get_content_json('h5p.json')
         self.assertEqual('Custom title & "words" in a shell', h5p_content['title'])
+
+    def test_no_fill_the_blanks(self):
+        """Test a H5P.QuestionSet file without "Fill in the Blanks" question."""
+
+        self.h5p_input_file = self.assets_dir + '/question-set-616.h5p'
+        data = self.run_command().get('stderr', [])
+        self.assertStartsWith(data[6], 'Traceback')
+        self.assertEqual(data[len(data) - 1], 'ValueError: H5P file needs one "Fill in the blanks" question')
+
+    def test_invalid_h5p_type(self):
+        """Test unsupported H5P content type."""
+
+        self.h5p_input_file = self.assets_dir + '/arithmetic-quiz-22-57860.h5p'
+        data = self.run_command().get('stderr', [])
+        self.assertStartsWith(data[6], 'Traceback')
+        self.assertEqual(data[len(data) - 1], "ValueError: 'H5P.ArithmeticQuiz' is not a supported H5P type.")
 
 if __name__ == '__main__':
     unittest.main()
