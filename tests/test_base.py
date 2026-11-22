@@ -45,7 +45,7 @@ class TestBase(unittest.TestCase):
         # Copy the input file to the temp.
         shutil.copy(self.h5p_input_file, self.h5p_test_file)
         # Get the path of the current file and create the path to the wiki2table.py script.
-        cli = ['python3', self.exec_py, self.h5p_test_file, self.spreadsheet]
+        cli = ['python', self.exec_py, self.h5p_test_file, self.spreadsheet]
         for k,v in args.items():
             cli.append(k)
             if (v != ''):
